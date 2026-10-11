@@ -1,0 +1,49 @@
+#!/bin/bash
+# system-powerd — следит за источником питания и переключает профиль.
+#
+#   system-powerd            демон: проверка раз в 5 с
+#   system-powerd --once     применить один раз и выйти (для udev / systemd)
+#
+# Логика: профиль = (сохранённый режим | auto) + (сеть | батарея).
+# При смене питания или режима профиль применяется заново.
+#
+# Причина опроса, а не udev: смена питания приходит не всегда, а опрос раз
+# в 5 секунд стоит ноль (чтение одного sysfs-файла).
+
+set -uo pipefail
+
+SP_ROOT="/usr/local/lib/system-power"
+[ -d "$SP_ROOT/lib" ] || SP_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/common.sh"
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/apply.sh"
+
+apply_once() {
+    local mode state
+    mode=$(sp_effective_mode)
+    state=$(sp_power_state)
+    sp_apply "$mode" "$state"
+}
+
+if [ "${1:-}" = "--once" ]; then
+    apply_once
+    exit 0
+fi
+
+[ "$(id -u)" = "0" ] || { echo "system-powerd запускается от root" >&2; exit 1; }
+
+sp_log "демон запущен"
+apply_once
+last="$(sp_effective_mode):$(sp_power_state)"
+
+while :; do
+    sleep 5
+    cur="$(sp_effective_mode):$(sp_power_state)"
+    if [ "$cur" != "$last" ]; then
+        sp_log "смена состояния: $last -> $cur"
+        apply_once
+        last="$cur"
+    fi
+done

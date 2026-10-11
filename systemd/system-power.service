@@ -1,0 +1,15 @@
+[Unit]
+Description=system-power — профили производительности и питания
+Documentation=file:///usr/local/lib/system-power/README.md
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/system-powerd
+Restart=always
+RestartSec=5
+# демон пишет в /sys и в журнал, ему нужен root
+User=root
+
+[Install]
+WantedBy=multi-user.target
