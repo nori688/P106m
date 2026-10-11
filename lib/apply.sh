@@ -34,13 +34,16 @@ sp_apply_cpu() {
         [ -e "$p/scaling_max_freq" ] && sp_write "$p/scaling_max_freq" "$maxmhz" "CPU max $(basename "$p")"
         [ -e "$p/energy_performance_preference" ] && \
             sp_write "$p/energy_performance_preference" "$epp" "EPP $(basename "$p")"
-        if [ -e "$p/scaling_governor" ]; then
-            if [ "$epp" = "performance" ]; then
-                sp_write "$p/scaling_governor" performance "governor $(basename "$p")"
-            else
-                sp_write "$p/scaling_governor" powersave "governor $(basename "$p")"
-            fi
-        fi
+
+        # Губернатор ВСЕГДА powersave, даже в режиме производительности.
+        # Причина: с intel_pstate только powersave оставляет доступным файл
+        # energy_performance_preference. Если поставить governor=performance,
+        # любая запись в EPP падает с EBUSY — и power-profiles-daemon не может
+        # сменить профиль («Failed to activate CPU driver 'intel_pstate'»),
+        # то есть режим в GNOME перестаёт переключаться вообще.
+        # Быстрота/экономия задаются через EPP, его для этого и придумали.
+        [ -e "$p/scaling_governor" ] && \
+            sp_write "$p/scaling_governor" powersave "governor $(basename "$p")"
     done
 
     # no_turbo: 1 = турбо ВЫКЛЮЧЕНО

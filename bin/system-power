@@ -1,11 +1,17 @@
 #!/bin/bash
-# system-power — переключение профилей производительности/питания.
+# system-power — раскладывает штатный режим GNOME по всей системе.
+#
+# Переключатель — обычный режим работы в GNOME (Настройки → Питание →
+# Режим работы). system-power слушает его и применяет профиль ко всей
+# системе, отдельно для сети и для батареи.
 #
 #   system-power                 статус
-#   system-power set <режим>     performance | balanced | power | auto
+#   system-power set <режим>     performance | balanced | power
+#                                (переключает заодно и профиль GNOME)
 #   system-power apply           применить профиль заново
 #   system-power show [режим]    таблица значений профиля
-#   system-power reset           вернуть auto + применить
+#   system-power reset           вернуть balanced
+#   system-power snapshot        запомнить текущий вид интерфейса
 #   system-power log [N]         последние строки журнала
 
 set -uo pipefail
@@ -30,11 +36,11 @@ need_root() {
 }
 
 cmd_status() {
-    local saved state eff
-    saved=$(sp_saved_mode); state=$(sp_power_state); eff=$(sp_effective_mode)
+    local saved state ppd
+    saved=$(sp_saved_mode); state=$(sp_power_state); ppd=$(sp_ppd_get 2>/dev/null)
     echo
     printf '  режим          : %s' "$(sp_mode_ru "$saved")"
-    [ "$saved" = "auto" ] && printf '  (сейчас действует: %s)' "$(sp_mode_ru "$eff")"
+    [ -n "$ppd" ] && printf '   (профиль GNOME: %s)' "$ppd"
     echo
     printf '  питание        : %s\n' "$(sp_state_ru "$state")"
     sp_load_config
@@ -96,15 +102,39 @@ cmd_show() {
 cmd_set() {
     local m="${1:-}"
     case "$m" in
-        performance|balanced|power|auto) ;;
-        *) echo "режимы: performance balanced power auto" >&2; exit 1 ;;
+        performance|balanced|power) ;;
+        auto)
+            echo "Отдельного «auto» больше нет: режим задаётся штатным"
+            echo "переключателем GNOME (Настройки → Питание → Режим работы),"
+            echo "а сеть/батарея учитываются автоматически." >&2
+            exit 1 ;;
+        *) echo "режимы: performance balanced power" >&2; exit 1 ;;
     esac
-    need_root "$@"
-    mkdir -p "$(dirname "$SP_MODE_FILE")"
-    printf '%s\n' "$m" > "$SP_MODE_FILE"
-    echo "режим: $(sp_mode_ru "$m")"
-    sp_apply "$(sp_effective_mode)" "$(sp_power_state)"
-    echo "профиль применён"
+    # передаём ПОЛНУЮ команду, иначе повторный запуск через sudo получит
+    # только название режима и не поймёт, что от него хотят
+    need_root set "$m"
+
+    # Переключаем ШТАТНЫЙ профиль — чтобы меню GNOME и система не расходились.
+    # PPD изредка отказывает, если запрос попал в момент его собственной
+    # работы, поэтому одна повторная попытка.
+    local ppd
+    ppd=$(sp_ppd_from_mode "$m")
+
+    if ! sp_ppd_available; then
+        echo "power-profiles-daemon не найден — режим храню в $SP_MODE_FILE"
+        mkdir -p "$(dirname "$SP_MODE_FILE")"
+        printf '%s\n' "$m" > "$SP_MODE_FILE"
+    elif sp_ppd_set "$ppd" || { sleep 1; sp_ppd_set "$ppd"; }; then
+        echo "профиль GNOME: $ppd"
+    else
+        echo "!! не удалось переключить профиль GNOME на $ppd." >&2
+        echo "   Проверь вручную: powerprofilesctl set $ppd" >&2
+        echo "   (режим в GNOME — источник правды, поэтому ничего не применяю)" >&2
+        exit 1
+    fi
+
+    sp_apply "$m" "$(sp_power_state)"
+    echo "профиль применён: $(sp_mode_ru "$m")"
 }
 
 case "${1:-status}" in
@@ -112,13 +142,12 @@ case "${1:-status}" in
     show)    shift; cmd_show "$@" ;;
     set)     shift; cmd_set "$@" ;;
     apply)   need_root "$@"; sp_apply "$(sp_effective_mode)" "$(sp_power_state)" && echo "применено" ;;
-    reset)   need_root "$@"; mkdir -p "$(dirname "$SP_MODE_FILE")"; echo auto > "$SP_MODE_FILE"
-             sp_apply "$(sp_effective_mode)" "$(sp_power_state)"; echo "сброшено на auto" ;;
+    reset)   shift; cmd_set balanced ;;
     log)     shift; tail -n "${1:-30}" "$SP_LOG" 2>/dev/null || echo "журнал пуст" ;;
     snapshot) shift; sp_snapshot && echo "снимок сохранён: $SP_BASELINE"
              [ -r "$SP_BASELINE" ] && grep -v '^#' "$SP_BASELINE" | sed 's/^/  /' ;;
     baseline) [ -r "$SP_BASELINE" ] && grep -v '^#' "$SP_BASELINE" | sed 's/^/  /' || echo "снимка нет" ;;
     -h|--help|help)
-             sed -n '2,10p' "$0" | sed 's/^# \?//' ;;
-    *)       echo "неизвестная команда: $1" >&2; sed -n '2,10p' "$0" | sed 's/^# \?//'; exit 1 ;;
+             sed -n '2,16p' "$0" | sed 's/^# \?//' ;;
+    *)       echo "неизвестная команда: $1" >&2; sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 1 ;;
 esac

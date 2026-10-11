@@ -49,26 +49,73 @@ sp_power_state() {
     esac
 }
 
-# Сохранённый режим (по умолчанию auto)
-sp_saved_mode() {
-    local m
-    m=$(cat "$SP_MODE_FILE" 2>/dev/null)
-    case "$m" in
-        performance|balanced|power|auto) echo "$m" ;;
-        *) echo auto ;;
+# ---------------------------------------------------------------- PPD
+#
+# Штатные три режима GNOME (Настройки → Питание → Режим работы) обслуживает
+# power-profiles-daemon. Именно он и есть переключатель: пользователь щёлкает
+# в системном меню, а system-power по этому событию раскладывает профиль по
+# всей системе. Второе измерение — источник питания (сеть/батарея).
+
+sp_ppd_available() { command -v powerprofilesctl >/dev/null 2>&1; }
+
+# текущий профиль PPD: performance | balanced | power-saver
+sp_ppd_get() {
+    sp_ppd_available || return 1
+    local p
+    p=$(powerprofilesctl get 2>/dev/null)
+    [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+    return 1
+}
+
+# Сменить профиль PPD.
+# ВАЖНО: polkit разрешает это только пользователю активной сессии, поэтому
+# от root вызываем через sp_as_user — иначе «power-profiles-daemon недоступен».
+sp_ppd_set() {
+    sp_ppd_available || return 1
+    if [ "$(id -u)" = "0" ]; then
+        sp_as_user powerprofilesctl set "$1" >/dev/null 2>&1
+    else
+        powerprofilesctl set "$1" >/dev/null 2>&1
+    fi
+}
+
+# PPD -> режим system-power
+sp_mode_from_ppd() {
+    case "$1" in
+        performance) echo performance ;;
+        balanced)    echo balanced ;;
+        power-saver) echo power ;;
+        *)           echo balanced ;;
     esac
 }
 
-# Режим с учётом auto
-sp_effective_mode() {
-    local m state
-    m=$(sp_saved_mode); state=$(sp_power_state)
-    if [ "$m" = "auto" ]; then
-        if [ "$state" = "ac" ]; then echo performance; else echo power; fi
-    else
-        echo "$m"
-    fi
+# режим system-power -> PPD
+sp_ppd_from_mode() {
+    case "$1" in
+        performance) echo performance ;;
+        balanced)    echo balanced ;;
+        power)       echo power-saver ;;
+        *)           echo balanced ;;
+    esac
 }
+
+# Текущий режим: берётся у PPD. Если PPD нет — из файла, как раньше.
+sp_saved_mode() {
+    local p m
+    if p=$(sp_ppd_get); then
+        sp_mode_from_ppd "$p"
+        return 0
+    fi
+    m=$(cat "$SP_MODE_FILE" 2>/dev/null)
+    case "$m" in
+        performance|balanced|power) echo "$m" ;;
+        *) echo balanced ;;
+    esac
+}
+
+# Режим совпадает с выбором в GNOME; отдельного «auto» больше не нужно —
+# состояние питания учитывается отдельной колонкой в таблице профилей.
+sp_effective_mode() { sp_saved_mode; }
 
 # Запись в sysfs: пишем только если значение отличается, ошибки — в лог
 sp_write() {
