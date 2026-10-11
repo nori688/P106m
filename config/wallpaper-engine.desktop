@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Wallpaper Engine 动态壁纸
+Comment=壁纸选择器后台服务，登录后恢复上次的壁纸
+Exec=bash -c "sleep 5; /home/nori/wallpaper-engine-gnome/wallpaper-picker.py --restore"
+Icon=io.github.fitz.WallpaperPicker
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+Terminal=false

@@ -1,0 +1,14 @@
+{
+  "workshop": "/home/nori/.local/share/wallpaper-engine/wallpapers",
+  "last": "3490279785",
+  "fps": 30,
+  "scaling": "default",
+  "particles": true,
+  "parallax": true,
+  "mouse": true,
+  "automute": true,
+  "autostart": true,
+  "clone": true,
+  "close_action": "tray",
+  "language": "system"
+}

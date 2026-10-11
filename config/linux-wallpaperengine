@@ -1,0 +1,26 @@
+#!/bin/sh
+# Обёртка над рендерером обоев.
+#
+# Куда: рядом с бинарником linux-wallpaperengine, сам бинарник переименовать
+#       в linux-wallpaperengine.real
+#
+# Что делает: уводит рендер на дискретную NVIDIA (P106M), готовый кадр уходит
+# на Intel через dma-buf — без копирования через системную память.
+#
+# Путь через GLX/X11 (__GLX_VENDOR_LIBRARY_NAME=nvidia) для этой карты
+# НЕ ИСПОЛЬЗОВАТЬ: он гонит кадр через RAM и на 1080p даёт 2 FPS.
+#
+# Если дискретка недоступна (модуль не загрузился, карта не поднялась,
+# откатился драйвер) — молча работаем на встроенной, чтобы обои не пропали.
+#
+# exec сохранён намеренно: PID процесса = PID рендерера, иначе
+# start-wallpaper.sh --stop не сможет его корректно завершить.
+
+DIR=$(dirname "$(readlink -f "$0")")
+
+if nvidia-smi -L 2>/dev/null | grep -q '^GPU'; then
+    export __NV_PRIME_RENDER_OFFLOAD=1
+    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+fi
+
+exec "$DIR/linux-wallpaperengine.real" "$@"

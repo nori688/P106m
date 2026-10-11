@@ -1,0 +1,23 @@
+# Драйвер NVIDIA для P106M ставится ТОЛЬКО вручную:
+#   NVIDIA-Linux-x86_64-535.309.01.run   (ветки 580+ эту карту не поднимают)
+#
+# Этот файл запрещает apt ставить и обновлять драйверные пакеты, чтобы
+# случайный `ubuntu-drivers install`, unattended-upgrade или обновление
+# системы не перезаписали рабочий драйвер и снова не «потеряли» видеокарту.
+#
+# Пакеты перечислены поимённо, а не маской libnvidia-* — иначе под запрет
+# попадает libnvidia-egl-wayland1, который нужен работающему драйверу
+# (именно он починил оффлоад на Wayland).
+#
+# Куда: /etc/apt/preferences.d/nvidia-535-manual.pref
+# Откат: удалить файл и выполнить `apt-get update`
+
+Package: nvidia-driver-* nvidia-headless-* nvidia-dkms-* nvidia-utils-*
+         nvidia-kernel-* nvidia-compute-utils-* nvidia-firmware-*
+         nvidia-prime nvidia-settings linux-modules-nvidia-*
+         libnvidia-cfg1-* libnvidia-common-* libnvidia-compute-*
+         libnvidia-decode-* libnvidia-encode-* libnvidia-extra-*
+         libnvidia-fbc1-* libnvidia-gl-* libnvidia-rtcore-*
+         libnvidia-nvvm4 libnvidia-opencl-* libnvidia-pkcs11-*
+Pin: version *
+Pin-Priority: -1
