@@ -16,27 +16,8 @@ sp_log() {
     return 0
 }
 
-# Значение ключа из таблицы: sp_value <КЛЮЧ> <режим> <состояние>
-# режим: performance|balanced|power   состояние: ac|battery
-sp_value() {
-    local key="$1" mode="$2" state="$3" col
-    case "$mode:$state" in
-        performance:ac)  col=2 ;;
-        performance:battery) col=3 ;;
-        balanced:ac)     col=4 ;;
-        balanced:battery) col=5 ;;
-        power:ac)        col=6 ;;
-        power:battery)   col=7 ;;
-        *) return 1 ;;
-    esac
-    awk -v k="$key" -v c="$col" '
-        $1 == k { print $c; found=1; exit }
-        END { exit(found ? 0 : 1) }
-    ' "$SP_PROFILES"
-}
-
-sp_modes()  { echo "performance balanced power"; }
-sp_states() { echo "ac battery"; }
+# Значения профиля картошки живут в lib/apply.sh (sp_potato_value):
+# таблица теперь из двух колонок, читать её из общего модуля незачем.
 
 # Текущее состояние питания.
 # SP_FORCE_STATE=ac|battery — отладочный override, чтобы проверять батарейные

@@ -50,7 +50,7 @@ install -m 755 "$SRC/bin/system-power"      "$PREFIX_BIN/system-power"
 install -m 755 "$SRC/daemon/system-powerd"  "$PREFIX_SBIN/system-powerd"
 install -m 644 "$SRC/lib/common.sh"         "$LIB/lib/common.sh"
 install -m 644 "$SRC/lib/apply.sh"          "$LIB/lib/apply.sh"
-install -m 644 "$SRC/lib/interface.sh"      "$LIB/lib/interface.sh"
+install -m 644 "$SRC/lib/snapshot.sh"       "$LIB/lib/snapshot.sh"
 install -m 644 "$SRC/lib/profiles.conf"     "$LIB/lib/profiles.conf"
 install -m 644 "$SRC/README.md"             "$LIB/README.md"
 
