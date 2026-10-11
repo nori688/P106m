@@ -1,0 +1,55 @@
+#!/bin/bash
+# system-powerd — следит за штатным режимом GNOME и источником питания.
+#
+#   system-powerd            демон: проверка раз в 5 с
+#   system-powerd --once     применить один раз и выйти
+#
+# Логика: режим берётся у power-profiles-daemon — это и есть переключатель
+# «Режим работы» в GNOME (performance / balanced / power-saver). Состояние —
+# источник питания (сеть / батарея). Профиль = режим × состояние, отдельные
+# числа для каждого сочетания лежат в lib/profiles.conf.
+#
+# Поэтому щелчок в системном меню GNOME перестраивает всю систему: от частот
+# процессора до темы оформления и обоев.
+#
+# Причина опроса, а не подписки на D-Bus: раз в 5 секунд это чтение одного
+# файла и одного свойства, зато работает одинаково и для питания, и для PPD,
+# и не ломается, если PPD перезапустится.
+
+set -uo pipefail
+
+SP_ROOT="/usr/local/lib/system-power"
+[ -d "$SP_ROOT/lib" ] || SP_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/common.sh"
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/apply.sh"
+
+apply_once() {
+    local mode state
+    mode=$(sp_effective_mode)
+    state=$(sp_power_state)
+    sp_apply "$mode" "$state"
+}
+
+if [ "${1:-}" = "--once" ]; then
+    apply_once
+    exit 0
+fi
+
+[ "$(id -u)" = "0" ] || { echo "system-powerd запускается от root" >&2; exit 1; }
+
+sp_log "демон запущен"
+apply_once
+last="$(sp_effective_mode):$(sp_power_state)"
+
+while :; do
+    sleep 5
+    cur="$(sp_effective_mode):$(sp_power_state)"
+    if [ "$cur" != "$last" ]; then
+        sp_log "смена состояния: $last -> $cur"
+        apply_once
+        last="$cur"
+    fi
+done

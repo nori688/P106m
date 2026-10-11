@@ -1,0 +1,153 @@
+#!/bin/bash
+# system-power — раскладывает штатный режим GNOME по всей системе.
+#
+# Переключатель — обычный режим работы в GNOME (Настройки → Питание →
+# Режим работы). system-power слушает его и применяет профиль ко всей
+# системе, отдельно для сети и для батареи.
+#
+#   system-power                 статус
+#   system-power set <режим>     performance | balanced | power
+#                                (переключает заодно и профиль GNOME)
+#   system-power apply           применить профиль заново
+#   system-power show [режим]    таблица значений профиля
+#   system-power reset           вернуть balanced
+#   system-power snapshot        запомнить текущий вид интерфейса
+#   system-power log [N]         последние строки журнала
+
+set -uo pipefail
+
+SP_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# запуск из репозитория vs установленный в /usr/local/bin
+# проверяем ИМЕННО свой файл, иначе на установленном варианте ловим /usr/local/lib
+[ -f "$SP_ROOT/lib/apply.sh" ] || SP_ROOT="/usr/local/lib/system-power"
+
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/common.sh"
+# shellcheck source=/dev/null
+. "$SP_ROOT/lib/apply.sh"
+
+need_root() {
+    [ "$(id -u)" = "0" ] && return 0
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo -n "$0" "$@" 2>/dev/null || exec sudo "$0" "$@"
+    fi
+    echo "Нужны права root." >&2
+    exit 1
+}
+
+cmd_status() {
+    local saved state ppd
+    saved=$(sp_saved_mode); state=$(sp_power_state); ppd=$(sp_ppd_get 2>/dev/null)
+    echo
+    printf '  режим          : %s' "$(sp_mode_ru "$saved")"
+    [ -n "$ppd" ] && printf '   (профиль GNOME: %s)' "$ppd"
+    echo
+    printf '  питание        : %s\n' "$(sp_state_ru "$state")"
+    sp_load_config
+    printf '  турбо          : %s\n' "$([ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null)" = 0 ] && echo вкл || echo выкл)"
+    printf '  EPP            : %s\n' "$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null)"
+    printf '  потолок CPU    : %s МГц\n' "$(( $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || echo 0) / 1000 ))"
+    local dir
+    if dir=$(sp_igpu_dir); then
+        printf '  потолок iGPU   : %s МГц (пол %s)\n' \
+            "$(cat "$dir/gt_max_freq_mhz" 2>/dev/null)" "$(cat "$dir/gt_min_freq_mhz" 2>/dev/null)"
+    fi
+    dir=$(sp_rapl_dir) && printf '  лимит пакета   : %s Вт\n' \
+        "$(( $(cat "$dir/constraint_0_power_limit_uw" 2>/dev/null || echo 0) / 1000000 ))"
+    local aspm cur
+    aspm=$(cat /sys/module/pcie_aspm/parameters/policy 2>/dev/null)
+    cur=$(printf '%s' "$aspm" | grep -o '\[[^]]*\]' | tr -d '[]')
+    printf '  PCIe ASPM      : %s\n' "${cur:-$aspm}"
+    printf '  анимации GNOME : %s\n' "$(sp_as_user gsettings get org.gnome.desktop.interface enable-animations 2>/dev/null)"
+    printf '  тема / иконки  : %s / %s\n' \
+        "$(sp_as_user gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null)" \
+        "$(sp_as_user gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null)"
+    printf '  фон            : %s\n' \
+        "$(sp_as_user gsettings get org.gnome.desktop.background picture-uri 2>/dev/null)"
+    printf '  расширений вкл : %s\n' "$(sp_as_user gnome-extensions list --enabled 2>/dev/null | wc -l)"
+    printf '  обои           : %s fps, карта: %s, режим: %s\n' \
+        "$(python3 -c "import json;print(json.load(open('$SP_WALLPAPER_SETTINGS')).get('fps','?'))" 2>/dev/null || echo '?')" \
+        "$(cat "$SP_STATE_DIR/wallpaper-gpu" 2>/dev/null || echo '?')" \
+        "$(cat "$SP_STATE_DIR/wallpaper-mode" 2>/dev/null || echo '?')"
+    if [ -r "$SP_BASELINE" ]; then
+        printf '  снимок         : есть (%s)\n' "$(sed -n '1p' "$SP_BASELINE" | sed 's/^# //')"
+    else
+        printf '  снимок         : нет (создастся при первом применении)\n'
+    fi
+    echo
+}
+
+cmd_show() {
+    sp_load_config
+    local m
+    if [ $# -gt 0 ]; then
+        m="$1"
+        case "$m" in performance|balanced|power) ;; *) echo "режимы: performance balanced power" >&2; return 1 ;; esac
+    fi
+    printf '\n  %-16s %-22s %-22s\n' "КЛЮЧ" "режим / сеть" "режим / батарея"
+    printf '  %s\n' "----------------------------------------------------------------------"
+    local key
+    while read -r key _; do
+        case "$key" in \#*|"") continue ;; esac
+        if [ -n "$m" ]; then
+            printf '  %-16s %-22s %-22s\n' "$key" \
+                "$(sp_value "$key" "$m" ac)" "$(sp_value "$key" "$m" battery)"
+        else
+            printf '  %-16s [%s]\n' "$key" "$(sp_value "$key" "$(sp_effective_mode)" "$(sp_power_state)")"
+        fi
+    done < "$SP_PROFILES"
+    echo
+}
+
+cmd_set() {
+    local m="${1:-}"
+    case "$m" in
+        performance|balanced|power) ;;
+        auto)
+            echo "Отдельного «auto» больше нет: режим задаётся штатным"
+            echo "переключателем GNOME (Настройки → Питание → Режим работы),"
+            echo "а сеть/батарея учитываются автоматически." >&2
+            exit 1 ;;
+        *) echo "режимы: performance balanced power" >&2; exit 1 ;;
+    esac
+    # передаём ПОЛНУЮ команду, иначе повторный запуск через sudo получит
+    # только название режима и не поймёт, что от него хотят
+    need_root set "$m"
+
+    # Переключаем ШТАТНЫЙ профиль — чтобы меню GNOME и система не расходились.
+    # PPD изредка отказывает, если запрос попал в момент его собственной
+    # работы, поэтому одна повторная попытка.
+    local ppd
+    ppd=$(sp_ppd_from_mode "$m")
+
+    if ! sp_ppd_available; then
+        echo "power-profiles-daemon не найден — режим храню в $SP_MODE_FILE"
+        mkdir -p "$(dirname "$SP_MODE_FILE")"
+        printf '%s\n' "$m" > "$SP_MODE_FILE"
+    elif sp_ppd_set "$ppd" || { sleep 1; sp_ppd_set "$ppd"; }; then
+        echo "профиль GNOME: $ppd"
+    else
+        echo "!! не удалось переключить профиль GNOME на $ppd." >&2
+        echo "   Проверь вручную: powerprofilesctl set $ppd" >&2
+        echo "   (режим в GNOME — источник правды, поэтому ничего не применяю)" >&2
+        exit 1
+    fi
+
+    sp_apply "$m" "$(sp_power_state)"
+    echo "профиль применён: $(sp_mode_ru "$m")"
+}
+
+case "${1:-status}" in
+    status)  cmd_status ;;
+    show)    shift; cmd_show "$@" ;;
+    set)     shift; cmd_set "$@" ;;
+    apply)   need_root "$@"; sp_apply "$(sp_effective_mode)" "$(sp_power_state)" && echo "применено" ;;
+    reset)   shift; cmd_set balanced ;;
+    log)     shift; tail -n "${1:-30}" "$SP_LOG" 2>/dev/null || echo "журнал пуст" ;;
+    snapshot) shift; sp_snapshot && echo "снимок сохранён: $SP_BASELINE"
+             [ -r "$SP_BASELINE" ] && grep -v '^#' "$SP_BASELINE" | sed 's/^/  /' ;;
+    baseline) [ -r "$SP_BASELINE" ] && grep -v '^#' "$SP_BASELINE" | sed 's/^/  /' || echo "снимка нет" ;;
+    -h|--help|help)
+             sed -n '2,16p' "$0" | sed 's/^# \?//' ;;
+    *)       echo "неизвестная команда: $1" >&2; sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 1 ;;
+esac
