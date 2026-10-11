@@ -197,6 +197,8 @@ PY
         fi
     fi
 
+    # off: движок полностью выключается, фон рабочего стола остаётся твой
+    # обычный (BACKGROUND=baseline в таблице профилей)
     if [ "$wp" = "off" ]; then
         sp_wallpaper_stop
         return 0
@@ -227,8 +229,10 @@ sp_apply() {
     sp_apply_power "$mode" "$state"
     sp_apply_gpu  "$mode" "$state"
     sp_apply_misc "$mode" "$state"
-    sp_apply_wallpaper "$mode" "$state"
+    # интерфейс ДО обоев: фон ставится в интерфейсе, а в режиме «фото»
+    # обои перекрывают его своим кадром — порядок здесь важен
     sp_apply_interface "$mode" "$state"
+    sp_apply_wallpaper "$mode" "$state"
 
     mkdir -p "$SP_STATE_DIR" 2>/dev/null
     printf '%s\n' "$mode"  > "$SP_STATE_DIR/applied-mode"  2>/dev/null

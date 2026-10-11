@@ -7,7 +7,9 @@
 # Adwaita навсегда. Поэтому baseline = значения из снимка, а не константы.
 
 SP_BASELINE="/var/lib/system-power/baseline.conf"
-SP_UI_LOGIN_THEME_FALLBACK="Adwaita"
+# Тема для «примитива». Тёмная, не светлая: светлый Adwaita в режиме
+# энергосбережения бьёт по глазам, особенно вечером.
+SP_UI_LOGIN_THEME_FALLBACK="Adwaita-dark"
 
 # Постоянные юниты пользователя, которые гасим в режиме EXTRAS=0
 SP_EXTRA_UNITS="localsearch-3.service evolution-addressbook-factory.service
@@ -118,7 +120,8 @@ sp_apply_interface() {
 
     v=$(sp_value COLOR_SCHEME "$mode" "$state")
     if [ "$v" = "plain" ]; then
-        ui_set org.gnome.desktop.interface color-scheme default
+        # prefer-dark, а не default: светлая схема в картошке режет глаза
+        ui_set org.gnome.desktop.interface color-scheme prefer-dark
     elif b=$(sp_baseline_get COLOR_SCHEME); then
         ui_set org.gnome.desktop.interface color-scheme "$b"
     fi

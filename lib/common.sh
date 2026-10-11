@@ -38,8 +38,13 @@ sp_value() {
 sp_modes()  { echo "performance balanced power"; }
 sp_states() { echo "ac battery"; }
 
-# Текущее состояние питания
+# Текущее состояние питания.
+# SP_FORCE_STATE=ac|battery — отладочный override, чтобы проверять батарейные
+# профили, не выдёргивая зарядку (нужен, например, для тестов фото обоев).
 sp_power_state() {
+    case "${SP_FORCE_STATE:-}" in
+        ac|battery) printf '%s' "$SP_FORCE_STATE"; return 0 ;;
+    esac
     local online
     online=$(cat /sys/class/power_supply/AC*/online 2>/dev/null | head -1)
     case "$online" in
