@@ -10,17 +10,42 @@
 # Путь через GLX/X11 (__GLX_VENDOR_LIBRARY_NAME=nvidia) для этой карты
 # НЕ ИСПОЛЬЗОВАТЬ: он гонит кадр через RAM и на 1080p даёт 2 FPS.
 #
-# Если дискретка недоступна (модуль не загрузился, карта не поднялась,
-# откатился драйвер) — молча работаем на встроенной, чтобы обои не пропали.
+# Откат на встроенную бывает нужен в двух случаях:
+#   1. дискретки нет вообще (модуль не загрузился, карта не поднялась);
+#   2. карта есть, но оффлоад не поднимается — типичный случай: GNOME-сессия
+#      стартовала раньше, чем появился драйвер, и композитор про карту не знает.
+#      Тогда движок падает с "eglGetPlatformDisplayEXT failed!" и обоев нет.
+#      Лечится перезагрузкой, но обои пропадать не должны.
 #
-# exec сохранён намеренно: PID процесса = PID рендерера, иначе
-# start-wallpaper.sh --stop не сможет его корректно завершить.
+# Поэтому оффлоад сначала пробуем: запускаем и смотрим, живёт ли процесс.
+# PID остаётся за обёрткой, а SIGTERM она пересылает движку — иначе
+# start-wallpaper.sh --stop не смог бы его завершить.
 
 DIR=$(dirname "$(readlink -f "$0")")
+REAL="$DIR/linux-wallpaperengine.real"
 
-if nvidia-smi -L 2>/dev/null | grep -q '^GPU'; then
+USE_NV=1
+[ "$(cat /run/system-power/wallpaper-gpu 2>/dev/null)" = "intel" ] && USE_NV=0
+nvidia-smi -L 2>/dev/null | grep -q '^GPU' || USE_NV=0
+
+if [ "$USE_NV" = "1" ]; then
     export __NV_PRIME_RENDER_OFFLOAD=1
     export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+    "$REAL" "$@" &
+    rpid=$!
+    trap 'kill "$rpid" 2>/dev/null; exit 0' TERM INT HUP
+
+    # если за это время движок не упал — оффлоад рабочий, работаем как есть
+    sleep 12
+    if kill -0 "$rpid" 2>/dev/null; then
+        wait "$rpid"
+        exit $?
+    fi
+    wait "$rpid" 2>/dev/null
+
+    # оффлоад не поднялся — молча возвращаемся на встроенную
+    unset __NV_PRIME_RENDER_OFFLOAD __EGL_VENDOR_LIBRARY_FILENAMES
 fi
 
-exec "$DIR/linux-wallpaperengine.real" "$@"
+exec "$REAL" "$@"
